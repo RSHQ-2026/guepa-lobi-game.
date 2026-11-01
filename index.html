@@ -1,0 +1,280 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Guepa y Lobi - Arena</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#111c30;color:white;font-family:Arial;text-align:center}
+h1{color:#ffdb65}
+.panel{background:#24344e;margin:10px;padding:12px;border-radius:12px}
+button,input{padding:12px;margin:4px;border:0;border-radius:9px;font-weight:bold}
+button{background:#ffcf55;color:#172033}
+input{width:180px}
+#arena{height:300px;margin:10px;background:linear-gradient(#8bd0ff 0 65%,#397b43 65%);border:4px solid white;border-radius:12px;position:relative;overflow:hidden}
+.fighter,.enemy{position:absolute;bottom:65px;transform:translateX(-50%);font-size:32px}
+#guepa{left:15%}
+#lobi{left:27%}
+#volt{left:40%}
+.enemy{font-size:25px}
+#hud{display:flex;justify-content:space-around;flex-wrap:wrap;gap:8px}
+.controls{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;max-width:520px;margin:10px auto}
+.controls button{min-height:52px;font-size:13px}
+#status{color:#9df5b1}
+</style>
+</head>
+<body>
+
+<h1>⚔️ GUEPA Y LOBI ⚔️</h1>
+
+<div class="panel">
+<b>SALA MULTIJUGADOR</b><br>
+<button onclick="createRoom()">Crear sala (Guepa)</button>
+<p id="room">Aquí aparecerá el código</p>
+<input id="roomCode" placeholder="Código de sala">
+<button onclick="joinRoom()">Unirse (Lobi)</button>
+<p id="status">Sin conexión</p>
+</div>
+
+<div class="panel" id="hud">
+<span>🔵 Guepa: <b id="ghp">100</b> HP</span>
+<span>🩷 Lobi: <b id="lhp">100</b> HP</span>
+<span>⚡ Energía: <b id="energy">100</b></span>
+<span>Ronda: <b id="round">1</b></span>
+</div>
+
+<div id="arena">
+<div class="fighter" id="guepa">🛡️</div>
+<div class="fighter" id="lobi">🩷</div>
+<div class="fighter" id="volt">⚡</div>
+<div id="enemies"></div>
+</div>
+
+<div class="panel">
+Jugador: <b id="role">Guepa</b>
+<p>Cada acción avanza una ronda.</p>
+</div>
+
+<div class="controls">
+<button onclick="act('left')">⬅️ Izquierda</button>
+<button onclick="act('up')">⬆️ Avanzar</button>
+<button onclick="act('right')">➡️ Derecha</button>
+<button onclick="act('m1')">👊 M1</button>
+<button onclick="act('power')">⚡ Multirayo / Piedra</button>
+<button onclick="act('push')">💥 Empuje</button>
+<button onclick="act('mega')">🫧 Mega burbuja</button>
+<button onclick="act('charge')">🐗 Embestida</button>
+<button onclick="act('heal')">💚 Curar</button>
+</div>
+
+<script>
+let peer=null;
+let connection=null;
+let role="guepa";
+let host=false;
+let connected=false;
+
+let state={
+ round:1,
+ guepa:{x:15,hp:100,energy:100},
+ lobi:{x:27,hp:100,energy:100},
+ enemies:[
+  {x:70,hp:30},
+  {x:82,hp:30},
+  {x:94,hp:30}
+ ],
+ bubble:false
+};
+
+function showStatus(s){
+ document.getElementById("status").textContent=s;
+}
+
+function createRoom(){
+ if(peer)return;
+ host=true;
+ role="guepa";
+ peer=new Peer();
+
+ peer.on("open",id=>{
+  document.getElementById("room").textContent="Código: "+id;
+  showStatus("Esperando a Lobi...");
+ });
+
+ peer.on("connection",c=>{
+  connection=c;
+  connected=true;
+  connection.on("data",data=>{
+   if(data.type==="action")perform(data.action,"lobi");
+  });
+  connection.on("close",()=>{
+   connected=false;
+   showStatus("El otro jugador se desconectó");
+  });
+  showStatus("¡Lobi conectado!");
+  sendState();
+ });
+
+ peer.on("error",()=>{
+  showStatus("Error de conexión. Inténtalo otra vez.");
+ });
+ document.getElementById("role").textContent="Guepa";
+}
+
+function joinRoom(){
+ if(peer)return;
+ let id=document.getElementById("roomCode").value.trim();
+ if(!id)return alert("Escribe el código de sala");
+
+ host=false;
+ role="lobi";
+ peer=new Peer();
+
+ peer.on("open",()=>{
+  connection=peer.connect(id);
+  connection.on("open",()=>{
+   connected=true;
+   showStatus("¡Conectado como Lobi!");
+   document.getElementById("role").textContent="Lobi";
+  });
+  connection.on("data",data=>{
+   if(data.type==="state"){
+    state=data.state;
+    render();
+   }
+  });
+  connection.on("error",()=>showStatus("Error de conexión"));
+  connection.on("close",()=>{
+   connected=false;
+   showStatus("Conexión cerrada");
+  });
+ });
+ peer.on("error",()=>{
+  showStatus("No se pudo conectar. Revisa el código.");
+ });
+}
+
+function act(action){
+ if(!connected){
+  alert("Primero conecta los dos jugadores.");
+  return;
+ }
+ if(host)perform(action,"guepa");
+ else if(connection&&connection.open)
+  connection.send({type:"action",action:action});
+}
+
+function perform(action,who){
+ let p=state[who];
+ if(!p||p.hp<=0)return;
+
+ if(action==="left")p.x=Math.max(3,p.x-5);
+ if(action==="right")p.x=Math.min(97,p.x+5);
+ if(action==="up")p.x=Math.min(97,p.x+3);
+
+ if(action==="m1")attack(who,12);
+
+ if(action==="power"){
+  if(p.energy>=15){
+   p.energy-=15;
+   attack(who,35);
+  }
+ }
+
+ if(action==="push")attack(who,25);
+
+ if(action==="mega"&&who==="guepa"){
+  state.bubble=!state.bubble;
+ }
+
+ if(action==="charge"&&who==="lobi"){
+  state.enemies.forEach(e=>e.hp-=30);
+  state.lobi.x=90;
+ }
+
+ if(action==="heal"){
+  if(p.energy>=10){
+   p.energy-=10;
+   p.hp=Math.min(100,p.hp+25);
+  }
+ }
+
+ state.round++;
+ enemyAction();
+
+ state.enemies=state.enemies.filter(e=>e.hp>0);
+
+ if(state.round%6===0){
+  state.guepa.hp=Math.min(100,state.guepa.hp+3);
+  state.lobi.hp=Math.min(100,state.lobi.hp+3);
+ }
+ if(state.round%7===0){
+  state.guepa.energy=Math.min(100,state.guepa.energy+2);
+  state.lobi.energy=Math.min(100,state.lobi.energy+2);
+ }
+
+ if(state.enemies.length===0){
+  state.enemies.push({x:75,hp:40},{x:88,hp:40});
+ }
+
+ render();
+ sendState();
+}
+
+function attack(who,damage){
+ let p=state[who];
+ let target=state.enemies.find(e=>Math.abs(e.x-p.x)<50);
+ if(target)target.hp-=damage;
+}
+
+function enemyAction(){
+ state.enemies.forEach(e=>{
+  let g=state.guepa;
+  let l=state.lobi;
+  let target=Math.abs(e.x-g.x)<Math.abs(e.x-l.x)?g:l;
+  if(Math.abs(e.x-target.x)<12){
+   target.hp=Math.max(0,target.hp-3);
+  }else{
+   e.x=Math.max(5,e.x-1);
+  }
+ });
+ // Volt ayuda automáticamente
+ if(state.enemies.length){
+  state.enemies[0].hp-=8;
+ }
+ if(state.round%10===0){
+  state.enemies.push({x:95,hp:80});
+ }
+}
+
+function sendState(){
+ if(host&&connected&&connection&&connection.open){
+  connection.send({type:"state",state:state});
+ }
+}
+
+function render(){
+ document.getElementById("guepa").style.left=state.guepa.x+"%";
+ document.getElementById("lobi").style.left=state.lobi.x+"%";
+ document.getElementById("ghp").textContent=state.guepa.hp;
+ document.getElementById("lhp").textContent=state.lobi.hp;
+ document.getElementById("energy").textContent=state.guepa.energy;
+ document.getElementById("round").textContent=state.round;
+
+ document.getElementById("enemies").innerHTML="";
+ state.enemies.forEach(e=>{
+  let el=document.createElement("div");
+  el.className="enemy";
+  el.textContent="👾";
+  el.style.left=e.x+"%";
+  document.getElementById("enemies").appendChild(el);
+ });
+}
+
+render();
+</script>
+</body>
+</html>
